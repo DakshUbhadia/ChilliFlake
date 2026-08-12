@@ -1,0 +1,2 @@
+# This directory holds SQLite database files at runtime.
+# All *.db / *.sqlite files are git-ignored — only this placeholder is committed.
