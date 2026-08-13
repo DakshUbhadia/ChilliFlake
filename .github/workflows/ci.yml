@@ -1,0 +1,53 @@
+﻿# ChilliFlake CI — Seeded pytest run with deliberate flakiness.
+#
+# Purpose: Generate ground-truth test report artifacts for the ChilliFlake
+# ingestion pipeline. The fixture suite contains:
+#   - Stable passing tests
+#   - A genuinely broken test (always fails)
+#   - A deliberately flaky test (fails ~30% of runs via random)
+#   - A skipped test
+#
+# Artifacts are uploaded as 'pytest-json-report' and retained for 90 days
+# so the ingestion engine can download and process them.
+
+name: "ChilliFlake CI"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # allows manual trigger to accumulate more build history
+
+jobs:
+  test:
+    name: Seeded test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-json-report
+
+      - name: Run seeded test suite
+        # The suite is expected to have failures (by design).
+        # continue-on-error keeps the workflow going so the artifact is
+        # always uploaded regardless of pass/fail outcome.
+        continue-on-error: true
+        run: |
+          python -m pytest tests/fixtures/ \
+            --json-report \
+            --json-report-file=report.json \
+            -v
+
+      - name: Upload JSON test report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-json-report
+          path: report.json
+          retention-days: 90
