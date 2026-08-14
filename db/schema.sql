@@ -27,3 +27,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
     FOREIGN KEY(build_id) REFERENCES builds(id),
     FOREIGN KEY(test_id) REFERENCES tests(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_test_runs_test_id ON test_runs(test_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_build_id ON test_runs(build_id);
+CREATE INDEX IF NOT EXISTS idx_builds_created_at ON builds(created_at);
