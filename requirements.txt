@@ -1,3 +1,5 @@
-requests
+﻿requests
 streamlit
 pytest
+pytest-json-report
+python-dotenv
