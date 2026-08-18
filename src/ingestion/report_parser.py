@@ -6,8 +6,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 logger = logging.getLogger(__name__)
+# 'timedOut' and 'interrupted' are included for forward-compatibility; _determine_status
+# maps JUnit XML outcomes to 'passed'/'failed'/'skipped' only — there is no native
+# timeout concept in JUnit XML, so those two values are never produced by this parser.
 VALID_STATUSES = frozenset({'passed', 'failed', 'timedOut', 'skipped', 'interrupted'})
-PROJECT = 'home-assistant-core'
 
 def extract_xml_files_from_zip(zip_path: str | Path) -> tuple[Path, list[Path]]:
     zip_path = Path(zip_path)
@@ -31,15 +33,15 @@ def _get_or_insert_build(conn: Any, github_run_id: int, commit_sha: str, branch:
     build_id_cache[github_run_id] = row['id']
     return row['id']
 
-def _get_or_insert_test(conn: Any, project: str, file_path: str | None, test_name: str, test_id_cache: dict[tuple[str, str | None, str], int]) -> int:
+def _get_or_insert_test(conn: Any, project: str, file_path: str | None, test_name: str, test_id_cache: dict[tuple[str, str, str], int]) -> int:
+    # Coerce None to '' so SQLite's UNIQUE(project, file_path, test_name) constraint
+    # deduplicates correctly — SQLite treats every NULL as distinct for UNIQUE purposes.
+    file_path = file_path or ''
     cache_key = (project, file_path, test_name)
     if cache_key in test_id_cache:
         return test_id_cache[cache_key]
     conn.execute('INSERT OR IGNORE INTO tests (project, file_path, test_name) VALUES (?, ?, ?)', (project, file_path, test_name))
-    if file_path is None:
-        row = conn.execute('SELECT id FROM tests WHERE project = ? AND file_path IS NULL AND test_name = ?', (project, test_name)).fetchone()
-    else:
-        row = conn.execute('SELECT id FROM tests WHERE project = ? AND file_path = ? AND test_name = ?', (project, file_path, test_name)).fetchone()
+    row = conn.execute('SELECT id FROM tests WHERE project = ? AND file_path = ? AND test_name = ?', (project, file_path, test_name)).fetchone()
     test_id_cache[cache_key] = row['id']
     return row['id']
 
@@ -57,7 +59,7 @@ def _determine_status(testcase: ET.Element) -> str:
         return 'skipped'
     return 'passed'
 
-def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_id_cache: dict[tuple[str, str | None, str], int], build_id_cache: dict[int, int]) -> dict[str, int]:
+def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_id_cache: dict[tuple[str, str, str], int], build_id_cache: dict[int, int], project: str = '') -> dict[str, int]:
     github_run_id = run_meta['github_run_id']
     counts = {'inserted': 0, 'skipped_bad_status': 0, 'files_parsed': 0, 'files_skipped': 0, 'already_ingested': 0}
     if not xml_paths:
@@ -100,7 +102,7 @@ def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_
                         counts['skipped_bad_status'] += 1
                         continue
                     file_path = _resolve_file_path(testcase, classname)
-                    test_id = _get_or_insert_test(conn, PROJECT, file_path, name, test_id_cache)
+                    test_id = _get_or_insert_test(conn, project, file_path, name, test_id_cache)
                     conn.execute('INSERT INTO test_runs (build_id, test_id, status, reported_flaky, duration_ms, retries) VALUES (?, ?, ?, 0, ?, 0)', (build_id, test_id, status, duration_ms))
                     counts['inserted'] += 1
             counts['files_parsed'] += 1

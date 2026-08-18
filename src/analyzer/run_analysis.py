@@ -22,7 +22,7 @@ except ImportError:
     pass
 
 from db.connection import get_connection
-from src.analyzer.flakiness import classify, duration_coefficient_of_variation, flip_rate, wilson_lower_bound
+from src.analyzer.flakiness import classify, duration_coefficient_of_variation, flip_count_and_rate, wilson_lower_bound
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(name)s -- %(message)s', datefmt='%Y-%m-%dT%H:%M:%S')
 logger = logging.getLogger('chilliflake.analyzer')
@@ -49,9 +49,8 @@ def _score_test(conn, test_id: int, min_samples: int, flaky_threshold: float, br
     passes = sum(1 for s in statuses if s == 'passed')
     pass_rate = passes / sample_size if sample_size > 0 else 0.0
 
-    fr = flip_rate(statuses)
+    flips, fr = flip_count_and_rate(statuses)
     n_pairs = max(sample_size - 1, 0)
-    flips = sum(1 for a, b in zip(statuses, statuses[1:]) if a != b)
     wlb = wilson_lower_bound(flips, n_pairs)
 
     cv = duration_coefficient_of_variation(durations)

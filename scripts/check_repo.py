@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.environ.get('GITHUB_TOKEN')
+if not TOKEN:
+    print("Error: GITHUB_TOKEN is not set. Add it to your .env file.")
+    sys.exit(1)
 headers = {
     'Authorization': f"Bearer {TOKEN}",
     'Accept': 'application/vnd.github+json'
