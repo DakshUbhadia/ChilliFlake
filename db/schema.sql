@@ -1,4 +1,4 @@
-﻿PRAGMA foreign_keys = ON;
+PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS builds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,3 +31,15 @@ CREATE TABLE IF NOT EXISTS test_runs (
 CREATE INDEX IF NOT EXISTS idx_test_runs_test_id ON test_runs(test_id);
 CREATE INDEX IF NOT EXISTS idx_test_runs_build_id ON test_runs(build_id);
 CREATE INDEX IF NOT EXISTS idx_builds_created_at ON builds(created_at);
+
+CREATE TABLE IF NOT EXISTS flakiness_scores (
+    test_id INTEGER PRIMARY KEY,
+    sample_size INTEGER NOT NULL,
+    pass_rate REAL NOT NULL,
+    flip_rate REAL NOT NULL,
+    wilson_lower_bound REAL NOT NULL,
+    duration_cv REAL,
+    verdict VARCHAR(20) NOT NULL CHECK(verdict IN ('stable','flaky','broken','insufficient_data')),
+    computed_at TIMESTAMP NOT NULL,
+    FOREIGN KEY(test_id) REFERENCES tests(id)
+);
