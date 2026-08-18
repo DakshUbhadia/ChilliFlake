@@ -11,6 +11,14 @@ def flip_rate(statuses: list[str]) -> float:
     return flips / (n - 1)
 
 
+def flip_count_and_rate(statuses: list[str]) -> tuple[int, float]:
+    n = len(statuses)
+    if n < 2:
+        return 0, 0.0
+    flips = sum(1 for a, b in zip(statuses, statuses[1:]) if a != b)
+    return flips, flips / (n - 1)
+
+
 def wilson_lower_bound(successes: int, n: int, z: float = 1.96) -> float:
     if n == 0:
         return 0.0

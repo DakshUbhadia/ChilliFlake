@@ -70,7 +70,7 @@ def main() -> None:
     try:
         session = make_session(token)
         build_id_cache: dict[int, int] = {}
-        test_id_cache: dict[tuple, int] = {}
+        test_id_cache: dict[tuple[str, str, str], int] = {}
         runs = list_workflow_runs(session, repo=args.repo, workflow_names=workflow_names, branch=branch_filter, max_runs=args.runs, created_after=created_after)
         logger.info('Fetched %d run(s) to process.', len(runs))
         total_builds_inserted = total_test_runs_inserted = 0
@@ -117,9 +117,10 @@ def main() -> None:
                 _cleanup(zip_paths, temp_dirs)
                 continue
             logger.info('Run %d: %d XML file(s) across %d artifact(s), %d download error(s).', run_id, len(all_xml_paths), len(target_artifacts), download_errors)
+            project_slug = args.repo.replace('/', '-')
             run_meta = {'github_run_id': run_id, 'commit_sha': commit_sha, 'branch': branch, 'created_at': created_at}
             try:
-                counts = ingest_run(conn, run_meta, all_xml_paths, test_id_cache, build_id_cache)
+                counts = ingest_run(conn, run_meta, all_xml_paths, test_id_cache, build_id_cache, project=project_slug)
             except Exception as exc:
                 logger.error('Run %d: ingest failed: %s', run_id, exc)
                 total_runs_errored += 1
