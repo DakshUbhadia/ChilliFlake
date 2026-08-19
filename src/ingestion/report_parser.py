@@ -6,9 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 logger = logging.getLogger(__name__)
-# 'timedOut' and 'interrupted' are included for forward-compatibility; _determine_status
-# maps JUnit XML outcomes to 'passed'/'failed'/'skipped' only — there is no native
-# timeout concept in JUnit XML, so those two values are never produced by this parser.
+
 VALID_STATUSES = frozenset({'passed', 'failed', 'timedOut', 'skipped', 'interrupted'})
 
 def extract_xml_files_from_zip(zip_path: str | Path) -> tuple[Path, list[Path]]:
@@ -34,8 +32,6 @@ def _get_or_insert_build(conn: Any, github_run_id: int, commit_sha: str, branch:
     return row['id']
 
 def _get_or_insert_test(conn: Any, project: str, file_path: str | None, test_name: str, test_id_cache: dict[tuple[str, str, str], int]) -> int:
-    # Coerce None to '' so SQLite's UNIQUE(project, file_path, test_name) constraint
-    # deduplicates correctly — SQLite treats every NULL as distinct for UNIQUE purposes.
     file_path = file_path or ''
     cache_key = (project, file_path, test_name)
     if cache_key in test_id_cache:

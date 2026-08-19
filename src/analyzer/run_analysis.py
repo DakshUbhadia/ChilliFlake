@@ -1,8 +1,3 @@
-"""Orchestration: reads test_runs, computes flakiness scores per test, writes
-results to flakiness_scores.
-Usage: python -m src.analyzer.run_analysis [--db PATH] [--min-samples N] [--top N]
-"""
-
 from __future__ import annotations
 
 import argparse
