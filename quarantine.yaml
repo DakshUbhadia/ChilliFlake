@@ -1,0 +1,7 @@
+generated_at: '2026-08-18T13:43:24Z'
+quarantined_tests:
+- node_id: dask/bytes/tests/test_http.py::test_parquet@http
+  wilson_lower_bound: 0.004103
+  flip_rate: 0.014925
+  sample_size: 135
+needs_attention: []

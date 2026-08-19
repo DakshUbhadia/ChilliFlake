@@ -1,7 +1,3 @@
-"""
-ChilliFlake — Query script to inspect DB results.
-Run from project root: python scripts/query_results.py
-"""
 import sqlite3
 import sys
 from pathlib import Path
@@ -65,11 +61,11 @@ print("=" * 60)
 print("WLB DISTRIBUTION (flaky threshold = 0.15)")
 print("=" * 60)
 buckets = [
-    ("0.00 – 0.02  (very stable)",   "wilson_lower_bound >= 0.00 AND wilson_lower_bound < 0.02"),
-    ("0.02 – 0.05  (stable)",        "wilson_lower_bound >= 0.02 AND wilson_lower_bound < 0.05"),
-    ("0.05 – 0.10  (low signal)",    "wilson_lower_bound >= 0.05 AND wilson_lower_bound < 0.10"),
-    ("0.10 – 0.15  (borderline)",    "wilson_lower_bound >= 0.10 AND wilson_lower_bound < 0.15"),
-    ("0.15+        (FLAKY)",         "wilson_lower_bound >= 0.15"),
+    ("0.00 – 0.02 (very stable)",    "wilson_lower_bound >= 0.00 AND wilson_lower_bound < 0.02"),
+    ("0.02 – 0.05 (stable)",         "wilson_lower_bound >= 0.02 AND wilson_lower_bound < 0.05"),
+    ("0.05 – 0.10 (low signal)",     "wilson_lower_bound >= 0.05 AND wilson_lower_bound < 0.10"),
+    ("0.10 – 0.15 (borderline)",     "wilson_lower_bound >= 0.10 AND wilson_lower_bound < 0.15"),
+    ("0.15+       (FLAKY)",          "wilson_lower_bound >= 0.15"),
 ]
 for label, cond in buckets:
     n = conn.execute(f"SELECT COUNT(*) AS c FROM flakiness_scores WHERE {cond}").fetchone()["c"]

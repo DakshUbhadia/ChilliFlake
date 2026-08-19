@@ -13,11 +13,10 @@ headers = {
     'Accept': 'application/vnd.github+json'
 }
 
-candidates = [
+candidates = [sys.argv[1]] if len(sys.argv) > 1 else [
     'apache/airflow',
     'grafana/grafana',
     'ansible/ansible',
-    'dask/dask',
     'ray-project/ray',
     'celery/celery',
     'microsoft/playwright-python',

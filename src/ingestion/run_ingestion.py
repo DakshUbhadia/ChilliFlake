@@ -25,7 +25,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--runs', type=int, default=20, metavar='N', help='Max workflow runs to fetch (default: 20).')
     parser.add_argument('--repo', default='home-assistant/core', help='owner/name (default: home-assistant/core).')
     parser.add_argument('--workflow', default='CI', help="Comma-separated workflow name(s) (default: 'CI').")
-    parser.add_argument('--branch', default='', help='Branch filter. Blank = all branches (needed for home-assistant/core).')
+    parser.add_argument('--branch', default='', help='Branch filter. Blank = all branches.')
     parser.add_argument('--created-after', default=None, metavar='DATE', help="ISO date (e.g. '2026-08-01'). Defaults to 7 days ago. 'all' disables the filter.")
     parser.add_argument('--artifact-name', default='test-results-full-', help='Artifact name prefix. ALL matches per run are downloaded and merged.')
     parser.add_argument('--db', default=None, help='SQLite DB path (overrides DB_PATH env var).')
