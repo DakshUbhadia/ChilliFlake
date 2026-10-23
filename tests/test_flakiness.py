@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from src.analyzer.flakiness import classify, duration_coefficient_of_variation, flip_rate, wilson_lower_bound, isolated_failure_count
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+def test_isolated_failures_distinguish_streaks_and_edges():
+    assert isolated_failure_count(['passed','failed','failed','passed']) == 0
+    assert isolated_failure_count(['passed','failed','passed','failed','passed']) == 2
 
-from src.analyzer.flakiness import classify, duration_coefficient_of_variation, flip_rate, wilson_lower_bound
+def test_classify_commit_conflict_wins_and_streak_only_flip_is_stable():
+    assert classify(20,.8,.5,commit_conflicts=1,isolated_failures=0)=='flaky'
+    assert classify(20,.8,.5,commit_conflicts=0,isolated_failures=0)=='stable'
 
 
 class TestFlipRate:

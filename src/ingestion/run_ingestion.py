@@ -17,7 +17,7 @@ if str(_project_root) not in sys.path:
 from db.connection import get_connection
 from src.ingestion.github_client import download_artifact_zip, list_artifacts, list_workflow_runs, make_session
 from src.ingestion.report_parser import extract_xml_files_from_zip, ingest_run
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(name)s — %(message)s', datefmt='%Y-%m-%dT%H:%M:%S')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(name)s -- %(message)s', datefmt='%Y-%m-%dT%H:%M:%S')
 logger = logging.getLogger('chilliflake.ingestion')
 
 def _parse_args() -> argparse.Namespace:
@@ -54,7 +54,7 @@ def main() -> None:
     args = _parse_args()
     token = os.environ.get('GITHUB_TOKEN')
     if not token:
-        logger.error("GITHUB_TOKEN not set. Add a PAT with 'public_repo' scope to .env — see .env.example.")
+        logger.error("GITHUB_TOKEN not set. Add a PAT with 'public_repo' scope to .env -- see .env.example.")
         sys.exit(1)
     workflow_names = [w.strip() for w in args.workflow.split(',') if w.strip()]
     if args.created_after is None:
@@ -85,7 +85,7 @@ def main() -> None:
             logger.info('Processing run %d (%s) @ %s ...', run_id, run.get('name', '?'), created_at)
 
             if _already_ingested(conn, run_id):
-                logger.info('Run %d: already ingested — skipping (no API calls spent).', run_id)
+                logger.info('Run %d: already ingested -- skipping (no API calls spent).', run_id)
                 total_already_ingested += 1
                 continue
 
@@ -111,6 +111,11 @@ def main() -> None:
                 except Exception as exc:
                     logger.error('Run %d | artifact %s: download/extract failed: %s', run_id, artifact.get('name', artifact_id), exc)
                     download_errors += 1
+            if download_errors:
+                logger.error('Run %d: %d artifact download(s) failed; not ingesting a partial run.', run_id, download_errors)
+                total_runs_errored += 1
+                _cleanup(zip_paths, temp_dirs)
+                continue
             if not all_xml_paths:
                 logger.warning('Run %d: no XML extracted from %d artifact(s). Skipping.', run_id, len(target_artifacts))
                 total_runs_no_artifact += 1
@@ -146,11 +151,11 @@ def main() -> None:
         logger.info('  Runs fetched=%d  no_artifact=%d  already_ingested=%d  errored=%d', len(runs), total_runs_no_artifact, total_already_ingested, total_runs_errored)
         logger.info('  Builds newly ingested=%d  test_runs inserted=%d', total_builds_inserted, total_test_runs_inserted)
         logger.info('  XML files parsed=%d  skipped=%d  bad-status rows=%d', total_files_parsed, total_files_skipped, total_skipped_bad_status)
-        logger.info('  Artifacts/run — min=%d max=%d avg=%.1f', art_min, art_max, art_avg)
+        logger.info('  Artifacts/run -- min=%d max=%d avg=%.1f', art_min, art_max, art_avg)
         logger.info('  Elapsed=%.1fs', elapsed)
         logger.info('=' * 60)
         row = conn.execute('SELECT (SELECT COUNT(*) FROM builds) AS builds, (SELECT COUNT(*) FROM tests) AS tests, (SELECT COUNT(*) FROM test_runs) AS test_runs').fetchone()
-        logger.info('DB totals — builds=%d tests=%d test_runs=%d', row['builds'], row['tests'], row['test_runs'])
+        logger.info('DB totals -- builds=%d tests=%d test_runs=%d', row['builds'], row['tests'], row['test_runs'])
     finally:
         conn.close()
 

@@ -1,0 +1,32 @@
+name: Daily ChilliFlake pipeline
+on:
+  schedule:
+    - cron: '25 2 * * *'
+  workflow_dispatch:
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: db/chilliflake.db
+          key: chilliflake-db-${{ github.run_id }}
+          restore-keys: chilliflake-db-
+      - name: Back up database
+        run: if [ -f db/chilliflake.db ]; then cp db/chilliflake.db db/chilliflake.db.bak; fi
+      - run: python scripts/run_pipeline.py --runs 50 --branch dev
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quarantine-${{ github.run_id }}
+          path: |
+            quarantine.json
+            db/chilliflake.db
+            db/chilliflake.db.bak

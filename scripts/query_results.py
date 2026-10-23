@@ -136,22 +136,21 @@ print("=" * 60)
 print("DIAGNOSIS")
 print("=" * 60)
 max_wlb = conn.execute("SELECT MAX(wilson_lower_bound) AS m FROM flakiness_scores").fetchone()["m"]
+max_wlb = max_wlb or 0.0
+conflict_tests = conn.execute("SELECT COUNT(*) FROM flakiness_scores WHERE commit_conflicts > 0").fetchone()[0]
+analysis_branch = conn.execute("SELECT DISTINCT analysis_branch FROM flakiness_scores LIMIT 1").fetchone()
+analysis_branch = '(all)' if analysis_branch and analysis_branch[0] == '*' else (analysis_branch[0] if analysis_branch else '(none)')
 n_builds = conn.execute("SELECT COUNT(*) AS c FROM builds").fetchone()["c"]
 unique_days = conn.execute("""
     SELECT COUNT(DISTINCT DATE(created_at)) AS d FROM builds
 """).fetchone()["d"]
 print(f"  Builds ingested : {n_builds}")
+print(f"  Branch scope    : {analysis_branch}")
+print(f"  Commit conflicts: {conflict_tests} test(s)")
 print(f"  Unique days     : {unique_days}")
 print(f"  Highest WLB     : {max_wlb:.4f}  (threshold = 0.15)")
 print()
 if max_wlb < 0.15:
-    print("  WHY NO FLAKY DETECTIONS?")
-    print(f"  All {n_builds} builds are from {unique_days} unique day(s).")
-    print("  The builds are too close together in time — they likely reflect")
-    print("  the same code state, so tests that occasionally fail on different")
-    print("  commits haven't had a chance to flip yet.")
-    print()
-    print("  TO GET FLAKY VERDICTS, run ingestion across a wider date range:")
-    print("    python -m src.ingestion.run_ingestion --runs 50 --created-after 2026-01-01")
+    print("  Check the analyzer branch scope and inspect same-commit conflicts.")
 
 conn.close()

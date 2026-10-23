@@ -3,10 +3,17 @@ __pycache__/
 *.pyc
 .env
 *.db
+*.db.bak
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 .pytest_cache/
+.pytest-temp/
+.pytest-temp-*/
 *.egg-info/
 dist/
 build/
 .DS_Store
+
+.early.coverage

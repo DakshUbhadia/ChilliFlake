@@ -1,5 +1,5 @@
 requests
 streamlit
-pytest
-pyyaml
 python-dotenv
+pandas
+pyyaml

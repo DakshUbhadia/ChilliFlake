@@ -20,6 +20,7 @@ def flip_count_and_rate(statuses: list[str]) -> tuple[int, float]:
 
 
 def wilson_lower_bound(successes: int, n: int, z: float = 1.96) -> float:
+    """Wilson lower bound for the flip proportion (flips / adjacent pairs)."""
     if n == 0:
         return 0.0
     p_hat = successes / n
@@ -27,6 +28,10 @@ def wilson_lower_bound(successes: int, n: int, z: float = 1.96) -> float:
     centre = p_hat + z2 / (2 * n)
     margin = z * math.sqrt(p_hat * (1 - p_hat) / n + z2 / (4 * n * n))
     return max(0.0, (centre - margin) / (1 + z2 / n))
+
+def isolated_failure_count(statuses: list[str]) -> int:
+    return sum(1 for i in range(1, len(statuses) - 1)
+               if statuses[i] != 'passed' and statuses[i - 1] == 'passed' and statuses[i + 1] == 'passed')
 
 
 def duration_coefficient_of_variation(durations_ms: list[int]) -> float | None:
@@ -47,11 +52,18 @@ def classify(
     min_samples: int = 5,
     flaky_threshold: float = 0.15,
     broken_threshold: float = 0.05,
+    *, isolated_failures: int | None = None,
+    commit_conflicts: int | None = None,
+    min_isolated: int = 2,
 ) -> str:
     if sample_size < min_samples:
         return 'insufficient_data'
     if pass_rate < broken_threshold:
         return 'broken'
+    if commit_conflicts:
+        return 'flaky'
     if wilson_lb > flaky_threshold:
+        if isolated_failures is not None and isolated_failures < min_isolated:
+            return 'stable'
         return 'flaky'
     return 'stable'

@@ -1,8 +1,5 @@
-import sys
 import zipfile
-from pathlib import Path
 import pytest
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from db.connection import get_connection
 from src.ingestion.report_parser import extract_xml_files_from_zip, ingest_run
 
@@ -42,6 +39,21 @@ def test_classname_fallback_when_no_file_attribute(tmp_path):
     xml = _suite('<testcase classname="a.b" name="t" time="0.01"/>')
     ingest_run(conn, _run_meta(), [_write(tmp_path, xml)], {}, {})
     assert conn.execute('SELECT file_path FROM tests').fetchone()['file_path'] == 'a/b.py'
+    assert conn.execute('SELECT test_name FROM tests').fetchone()['test_name'] == 't'
+
+@pytest.mark.parametrize(('classname','expected'), [('tests.a.test_b.TestFoo','TestFoo::test_x'), ('tests.a.test_b.Outer.Inner','Outer::Inner::test_x')])
+def test_classname_class_chain_is_node_id_compatible(tmp_path, classname, expected):
+    conn=_db(); xml=_suite(f'<testcase classname="{classname}" name="test_x"/>')
+    ingest_run(conn,_run_meta(),[_write(tmp_path,xml)],{}, {})
+    row=conn.execute('SELECT file_path,test_name FROM tests').fetchone()
+    assert row['file_path']=='tests/a/test_b.py' and row['test_name']==expected
+
+def test_classname_identity_preserves_file_attribute_and_no_classname(tmp_path):
+    conn=_db(); xml=_suite('<testcase classname="tests.a.TestFoo" name="test_x" file="custom/test.py"/>','<testcase name="test_y"/>')
+    ingest_run(conn,_run_meta(),[_write(tmp_path,xml)],{}, {})
+    rows=conn.execute('SELECT file_path,test_name FROM tests ORDER BY test_name').fetchall()
+    assert (rows[0]['file_path'],rows[0]['test_name'])==('custom/test.py','TestFoo::test_x')
+    assert (rows[1]['file_path'],rows[1]['test_name'])==('', 'test_y')
 
 def test_testsuites_wrapper_root_supported(tmp_path):
     conn = _db()
@@ -81,6 +93,24 @@ def test_reingest_same_run_is_true_noop(tmp_path):
     assert first['inserted'] == 1 and first['already_ingested'] == 0
     assert second['inserted'] == 0 and second['already_ingested'] == 1
     assert conn.execute('SELECT COUNT(*) c FROM test_runs').fetchone()['c'] == 1
+
+def test_caches_are_cleared_after_rollback(tmp_path,monkeypatch):
+    real_conn=_db(); path=_write(tmp_path,_suite('<testcase classname="a" name="t"/>'))
+    class Proxy:
+        def __init__(self): self.calls=0; self.fail=True
+        def execute(self,sql,*args):
+            self.calls+=1
+            if self.fail and self.calls==4: raise RuntimeError('forced failure')
+            return real_conn.execute(sql,*args)
+        def rollback(self): return real_conn.rollback()
+        def commit(self): return real_conn.commit()
+    conn=Proxy()
+    builds={}; tests={}
+    with pytest.raises(RuntimeError): ingest_run(conn,_run_meta(1),[path],tests,builds)
+    assert not builds and not tests
+    conn.fail=False; conn.calls=0
+    result=ingest_run(conn,_run_meta(2),[path],tests,builds)
+    assert result['inserted']==1
 
 class TestExtractZip:
 

@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
-import tempfile
-from pathlib import Path
 
 import pytest
 import yaml
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from db.connection import get_connection
 from src.quarantine.export_quarantine import export_quarantine, _node_id

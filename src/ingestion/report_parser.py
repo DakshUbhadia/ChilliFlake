@@ -41,12 +41,17 @@ def _get_or_insert_test(conn: Any, project: str, file_path: str | None, test_nam
     test_id_cache[cache_key] = row['id']
     return row['id']
 
-def _resolve_file_path(testcase: ET.Element, classname: str) -> str | None:
-    file_attr = testcase.get('file')
-    if file_attr:
-        return file_attr
-    classname = classname.strip()
-    return classname.replace('.', '/') + '.py' if classname else None
+def _split_classname(classname: str) -> tuple[list[str], list[str]]:
+    parts = [part for part in classname.strip().split('.') if part]
+    for i, part in enumerate(parts):
+        if part[:1].isupper():
+            return parts[:i], parts[i:]
+    return parts, []
+
+def _resolve_identity(testcase: ET.Element, classname: str, name: str) -> tuple[str | None, str]:
+    module_parts, class_parts = _split_classname(classname)
+    file_path = testcase.get('file') or ('/'.join(module_parts) + '.py' if module_parts else None)
+    return file_path, '::'.join(class_parts + [name])
 
 def _determine_status(testcase: ET.Element) -> str:
     if testcase.find('failure') is not None or testcase.find('error') is not None:
@@ -94,11 +99,11 @@ def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_
                         duration_ms = 0
                     status = _determine_status(testcase)
                     if status not in VALID_STATUSES:
-                        logger.error('Run %d | %s::%s: invalid status %r — bug, skipping.', github_run_id, classname, name, status)
+                        logger.error('Run %d | %s::%s: invalid status %r -- bug, skipping.', github_run_id, classname, name, status)
                         counts['skipped_bad_status'] += 1
                         continue
-                    file_path = _resolve_file_path(testcase, classname)
-                    test_id = _get_or_insert_test(conn, project, file_path, name, test_id_cache)
+                    file_path, test_name = _resolve_identity(testcase, classname, name)
+                    test_id = _get_or_insert_test(conn, project, file_path, test_name, test_id_cache)
                     conn.execute('INSERT INTO test_runs (build_id, test_id, status, reported_flaky, duration_ms, retries) VALUES (?, ?, ?, 0, ?, 0)', (build_id, test_id, status, duration_ms))
                     counts['inserted'] += 1
             counts['files_parsed'] += 1
@@ -106,6 +111,8 @@ def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_
         logger.info('Run %d: %d inserted, %d files parsed, %d skipped, %d bad-status.', github_run_id, counts['inserted'], counts['files_parsed'], counts['files_skipped'], counts['skipped_bad_status'])
     except Exception:
         conn.rollback()
-        logger.exception('Run %d failed — rolled back.', github_run_id)
+        build_id_cache.pop(github_run_id, None)
+        test_id_cache.clear()
+        logger.exception('Run %d failed -- rolled back.', github_run_id)
         raise
     return counts
