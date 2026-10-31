@@ -15,6 +15,7 @@ _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 from db.connection import get_connection
+from src.project_config import get_project
 from src.ingestion.github_client import download_artifact_zip, list_artifacts, list_workflow_runs, make_session
 from src.ingestion.report_parser import extract_xml_files_from_zip, ingest_run
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(name)s -- %(message)s', datefmt='%Y-%m-%dT%H:%M:%S')
@@ -23,11 +24,12 @@ logger = logging.getLogger('chilliflake.ingestion')
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='ChilliFlake ingestion: pull CI run reports into SQLite.')
     parser.add_argument('--runs', type=int, default=20, metavar='N', help='Max workflow runs to fetch (default: 20).')
-    parser.add_argument('--repo', default='home-assistant/core', help='owner/name (default: home-assistant/core).')
-    parser.add_argument('--workflow', default='CI', help="Comma-separated workflow name(s) (default: 'CI').")
-    parser.add_argument('--branch', default='', help='Branch filter. Blank = all branches.')
+    parser.add_argument('--repo', default=None, help='owner/name; defaults to the configured project repository.')
+    parser.add_argument('--project', default=None, help='Configured project key (default: home-assistant-core).')
+    parser.add_argument('--workflow', default=None, help='Comma-separated workflow name(s); defaults to project config.')
+    parser.add_argument('--branch', default=None, help='Branch filter. Defaults to the project branch; pass an empty string to include all branches.')
     parser.add_argument('--created-after', default=None, metavar='DATE', help="ISO date (e.g. '2026-08-01'). Defaults to 7 days ago. 'all' disables the filter.")
-    parser.add_argument('--artifact-name', default='test-results-full-', help='Artifact name prefix. ALL matches per run are downloaded and merged.')
+    parser.add_argument('--artifact-name', default=None, help='Artifact name prefix; defaults to project config.')
     parser.add_argument('--db', default=None, help='SQLite DB path (overrides DB_PATH env var).')
     return parser.parse_args()
 
@@ -52,26 +54,36 @@ def _already_ingested(conn, github_run_id: int) -> bool:
 
 def main() -> None:
     args = _parse_args()
+    project_name, project_settings = get_project(getattr(args, 'project', None), args.repo)
+    repo = args.repo or project_settings.get('repo')
+    if not repo:
+        logger.error('Project %s has no repository configured. Pass --repo owner/name.', project_name)
+        sys.exit(2)
+    workflow = args.workflow or project_settings.get('workflow')
+    artifact_name = args.artifact_name or project_settings.get('artifact_prefix')
+    if not workflow or not artifact_name:
+        logger.error('Project %s has no confirmed workflow/artifact prefix. Pass --workflow and --artifact-name explicitly after checking live artifacts.', project_name)
+        sys.exit(2)
     token = os.environ.get('GITHUB_TOKEN')
     if not token:
-        logger.error("GITHUB_TOKEN not set. Add a PAT with 'public_repo' scope to .env -- see .env.example.")
-        sys.exit(1)
-    workflow_names = [w.strip() for w in args.workflow.split(',') if w.strip()]
+        logger.warning('GITHUB_TOKEN is not set; using lower-rate anonymous access (public repositories only).')
+    workflow_names = [w.strip() for w in workflow.split(',') if w.strip()]
     if args.created_after is None:
         created_after: str | None = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
     elif args.created_after.lower() == 'all':
         created_after = None
     else:
         created_after = args.created_after
-    branch_filter: str | None = args.branch.strip() or None
-    logger.info('Repo=%s Workflows=%s Branch=%s CreatedAfter=%s MaxRuns=%d ArtifactPrefix=%s', args.repo, workflow_names, branch_filter or '(all)', created_after or '(all time)', args.runs, args.artifact_name)
+    branch_arg = project_settings.get('branch', '') if args.branch is None else args.branch
+    branch_filter: str | None = branch_arg.strip() or None
+    logger.info('Repo=%s Workflows=%s Branch=%s CreatedAfter=%s MaxRuns=%d ArtifactPrefix=%s', repo, workflow_names, branch_filter or '(all)', created_after or '(all time)', args.runs, artifact_name)
     start_time = time.monotonic()
     conn = get_connection(args.db)
     try:
         session = make_session(token)
         build_id_cache: dict[int, int] = {}
         test_id_cache: dict[tuple[str, str, str], int] = {}
-        runs = list_workflow_runs(session, repo=args.repo, workflow_names=workflow_names, branch=branch_filter, max_runs=args.runs, created_after=created_after)
+        runs = list_workflow_runs(session, repo=repo, workflow_names=workflow_names, branch=branch_filter, max_runs=args.runs, created_after=created_after)
         logger.info('Fetched %d run(s) to process.', len(runs))
         total_builds_inserted = total_test_runs_inserted = 0
         total_skipped_bad_status = total_files_parsed = total_files_skipped = 0
@@ -89,9 +101,9 @@ def main() -> None:
                 total_already_ingested += 1
                 continue
 
-            target_artifacts = list_artifacts(session, repo=args.repo, run_id=run_id, name_prefix=args.artifact_name)
+            target_artifacts = list_artifacts(session, repo=repo, run_id=run_id, name_prefix=artifact_name)
             if not target_artifacts:
-                logger.warning('Run %d: no artifact matching prefix %r. Skipping.', run_id, args.artifact_name)
+                logger.warning('Run %d: no artifact matching prefix %r. Skipping.', run_id, artifact_name)
                 total_runs_no_artifact += 1
                 continue
             artifact_counts_per_run.append(len(target_artifacts))
@@ -103,7 +115,7 @@ def main() -> None:
             for artifact in target_artifacts:
                 artifact_id: int = artifact['id']
                 try:
-                    zip_path = download_artifact_zip(session, artifact_id, repo=args.repo)
+                    zip_path = download_artifact_zip(session, artifact_id, repo=repo)
                     zip_paths.append(zip_path)
                     temp_dir, xml_paths = extract_xml_files_from_zip(zip_path)
                     temp_dirs.append(temp_dir)
@@ -122,10 +134,9 @@ def main() -> None:
                 _cleanup(zip_paths, temp_dirs)
                 continue
             logger.info('Run %d: %d XML file(s) across %d artifact(s), %d download error(s).', run_id, len(all_xml_paths), len(target_artifacts), download_errors)
-            project_slug = args.repo.replace('/', '-')
-            run_meta = {'github_run_id': run_id, 'commit_sha': commit_sha, 'branch': branch, 'created_at': created_at}
+            run_meta = {'github_run_id': run_id, 'commit_sha': commit_sha, 'branch': branch, 'created_at': created_at, 'repo': repo}
             try:
-                counts = ingest_run(conn, run_meta, all_xml_paths, test_id_cache, build_id_cache, project=project_slug)
+                counts = ingest_run(conn, run_meta, all_xml_paths, test_id_cache, build_id_cache, project=project_name)
             except Exception as exc:
                 logger.error('Run %d: ingest failed: %s', run_id, exc)
                 total_runs_errored += 1
@@ -156,6 +167,9 @@ def main() -> None:
         logger.info('=' * 60)
         row = conn.execute('SELECT (SELECT COUNT(*) FROM builds) AS builds, (SELECT COUNT(*) FROM tests) AS tests, (SELECT COUNT(*) FROM test_runs) AS test_runs').fetchone()
         logger.info('DB totals -- builds=%d tests=%d test_runs=%d', row['builds'], row['tests'], row['test_runs'])
+        if total_runs_errored:
+            logger.error('%d run(s) failed; refusing to report a successful ingestion.', total_runs_errored)
+            raise SystemExit(1)
     finally:
         conn.close()
 

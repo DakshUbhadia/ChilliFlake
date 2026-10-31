@@ -1,5 +1,6 @@
 from argparse import Namespace
 import zipfile
+import pytest
 from db.connection import get_connection
 import src.ingestion.run_ingestion as ingestion
 
@@ -18,7 +19,9 @@ def test_partial_artifact_download_does_not_ingest(monkeypatch,tmp_path):
         return next(paths)
     monkeypatch.setattr(ingestion,'download_artifact_zip',download)
     monkeypatch.setenv('GITHUB_TOKEN','test')
-    ingestion.main()
+    with pytest.raises(SystemExit) as exc:
+        ingestion.main()
+    assert exc.value.code == 1
     import sqlite3
     check=sqlite3.connect(db_path)
     assert check.execute('SELECT COUNT(*) FROM builds').fetchone()[0]==0

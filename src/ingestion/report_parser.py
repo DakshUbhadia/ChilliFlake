@@ -14,6 +14,11 @@ def extract_xml_files_from_zip(zip_path: str | Path) -> tuple[Path, list[Path]]:
     temp_dir = Path(tempfile.mkdtemp(prefix='chilliflake_xml_'))
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
+            root = temp_dir.resolve()
+            for member in zf.infolist():
+                target = (temp_dir / member.filename).resolve()
+                if not target.is_relative_to(root):
+                    raise ValueError(f'Unsafe path in artifact ZIP: {member.filename!r}')
             zf.extractall(temp_dir)
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -23,10 +28,10 @@ def extract_xml_files_from_zip(zip_path: str | Path) -> tuple[Path, list[Path]]:
         logger.warning('ZIP %s contained no .xml files.', zip_path.name)
     return (temp_dir, xml_paths)
 
-def _get_or_insert_build(conn: Any, github_run_id: int, commit_sha: str, branch: str | None, created_at: str, build_id_cache: dict[int, int]) -> int:
+def _get_or_insert_build(conn: Any, github_run_id: int, commit_sha: str, branch: str | None, created_at: str, build_id_cache: dict[int, int], repo: str | None = None) -> int:
     if github_run_id in build_id_cache:
         return build_id_cache[github_run_id]
-    conn.execute('INSERT OR IGNORE INTO builds (github_run_id, commit_sha, branch, created_at) VALUES (?, ?, ?, ?)', (github_run_id, commit_sha, branch, created_at))
+    conn.execute('INSERT OR IGNORE INTO builds (github_run_id, commit_sha, branch, created_at, repo) VALUES (?, ?, ?, ?, ?)', (github_run_id, commit_sha, branch, created_at, repo))
     row = conn.execute('SELECT id FROM builds WHERE github_run_id = ?', (github_run_id,)).fetchone()
     build_id_cache[github_run_id] = row['id']
     return row['id']
@@ -67,7 +72,7 @@ def ingest_run(conn: Any, run_meta: dict[str, Any], xml_paths: list[Path], test_
         logger.warning('Run %d: no XML files provided.', github_run_id)
         return counts
     try:
-        build_id = _get_or_insert_build(conn, github_run_id, run_meta.get('commit_sha', 'unknown'), run_meta.get('branch'), run_meta.get('created_at', ''), build_id_cache)
+        build_id = _get_or_insert_build(conn, github_run_id, run_meta.get('commit_sha', 'unknown'), run_meta.get('branch'), run_meta.get('created_at', ''), build_id_cache, run_meta.get('repo'))
         if conn.execute('SELECT 1 FROM test_runs WHERE build_id = ? LIMIT 1', (build_id,)).fetchone():
             logger.info('Run %d: already ingested (build_id=%d). Skipping.', github_run_id, build_id)
             counts['already_ingested'] = 1

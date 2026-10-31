@@ -1,4 +1,6 @@
 name: Daily ChilliFlake pipeline
+permissions:
+  contents: read
 on:
   schedule:
     - cron: '25 2 * * *'
@@ -20,13 +22,15 @@ jobs:
           restore-keys: chilliflake-db-
       - name: Back up database
         run: if [ -f db/chilliflake.db ]; then cp db/chilliflake.db db/chilliflake.db.bak; fi
-      - run: python scripts/run_pipeline.py --runs 50 --branch dev
+      - run: python scripts/run_pipeline.py --runs 50 --project home-assistant-core --branch dev
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PAT scoped to home-assistant/core with Actions: read.
+          # The automatic token is limited to this workflow's repository.
+          GITHUB_TOKEN: ${{ secrets.CHILLIFLAKE_GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: quarantine-${{ github.run_id }}
           path: |
-            quarantine.json
+            quarantine.yaml
             db/chilliflake.db
             db/chilliflake.db.bak

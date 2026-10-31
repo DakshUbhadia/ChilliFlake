@@ -1,0 +1,14 @@
+dask:
+  repo: dask/dask
+  # The Tests matrix uploads pytest.xml in per-environment artifacts.
+  # Limit ingestion to Linux jobs for comparable repeated observations.
+  workflow: Tests
+  artifact_prefix: ubuntu
+  branch: main
+  min_samples: 10
+home-assistant-core:
+  repo: home-assistant/core
+  workflow: CI
+  artifact_prefix: test-results-full-
+  branch: dev
+  min_samples: 10

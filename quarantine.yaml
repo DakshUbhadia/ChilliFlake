@@ -1,7 +1,21 @@
-generated_at: '2026-08-18T13:43:24Z'
-quarantined_tests:
-- node_id: dask/bytes/tests/test_http.py::test_parquet@http
-  wilson_lower_bound: 0.004103
-  flip_rate: 0.014925
-  sample_size: 135
-needs_attention: []
+schema_version: 1
+project: home-assistant-core
+generated_at: '2026-10-31T00:00:00+00:00'
+source:
+  repo: home-assistant/core
+  branch: dev
+  builds_analyzed: 0
+  window:
+    from: null
+    to: null
+thresholds: {}
+summary:
+  quarantined: 0
+  newly_quarantined: 0
+  released: 0
+  regressed: 0
+quarantine: []
+changes:
+  newly_quarantined: []
+  released: []
+  regressed: []

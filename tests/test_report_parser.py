@@ -140,3 +140,15 @@ class TestExtractZip:
         with pytest.raises(zipfile.BadZipFile):
             extract_xml_files_from_zip(bad_zip)
         assert not fake_dir.exists()
+
+    def test_rejects_archive_path_traversal_and_cleans_up(self, tmp_path, monkeypatch):
+        fake_dir = tmp_path / 'chilliflake_xml_test'
+        fake_dir.mkdir()
+        monkeypatch.setattr('src.ingestion.report_parser.tempfile.mkdtemp', lambda prefix='': str(fake_dir))
+        archive = tmp_path / 'unsafe.zip'
+        with zipfile.ZipFile(archive, 'w') as zf:
+            zf.writestr('../escaped.xml', '<testsuite/>')
+        with pytest.raises(ValueError, match='Unsafe path'):
+            extract_xml_files_from_zip(archive)
+        assert not fake_dir.exists()
+        assert not (tmp_path / 'escaped.xml').exists()

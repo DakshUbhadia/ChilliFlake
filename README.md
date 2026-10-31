@@ -1,58 +1,72 @@
 # ChilliFlake
 
-ChilliFlake ingests JUnit XML from GitHub Actions, scores test histories, maintains a quarantine list, and provides a Streamlit dashboard.
+ChilliFlake ingests JUnit XML from GitHub Actions, scores test histories, maintains a project-scoped quarantine list, and provides a Streamlit dashboard.
 
 ```mermaid
 flowchart LR
   A[GitHub Actions artifacts] --> B[Ingestion]
   B --> C[(SQLite history)]
-  C --> D[Branch scoped scoring]
-  D --> E[Quarantine sync and JSON export]
+  C --> D[Project and branch scoped scoring]
+  D --> E[Quarantine sync and versioned YAML export]
   E --> F[pytest plugin in target CI]
   C --> G[Streamlit dashboard]
 ```
 
 ## Setup
 
-Use Python 3.11 or newer. Install dependencies with `pip install -r requirements-dev.txt`. Set `GITHUB_TOKEN` and optionally `DB_PATH` in `.env` (the token needs repository Actions read access). Existing databases should be backed up and upgraded with `python scripts/migrate_v2.py --db db/chilliflake.db` before analysis.
+Use Python 3.11 or newer. Install dependencies with `pip install -r requirements-dev.txt`. Copy `.env.example` to `.env`, and optionally set `DB_PATH`. A fine-grained `GITHUB_TOKEN` with **Actions: read** access is recommended for higher rate limits and required for private source repositories; public metadata can be read anonymously, though artifact archives may still require authentication. Back up existing databases and run both migrations before analysis:
+
+```sh
+python scripts/migrate_v2.py --db db/chilliflake.db
+python scripts/migrate_v3.py --db db/chilliflake.db
+```
+
+Project defaults are in `config/projects.yaml`. Both Home Assistant and Dask are configured; Dask ingestion selects Linux artifacts from its `Tests` workflow so repeated runs remain comparable.
+
+See [the Dask validation record](docs/validation_dask.md) for the preserved real-CI dataset and reproduction commands.
+
+For the scheduled workflow, store the same token as the repository secret `CHILLIFLAKE_GITHUB_TOKEN`. GitHub's automatic workflow token is scoped to the repository containing the workflow and cannot authenticate cross-repository artifact access.
 
 ## Pipeline
 
 ```sh
-python -m src.ingestion.run_ingestion --runs 50 --branch dev
-python -m src.analyzer.run_analysis --branch dev
-python -m src.analyzer.quarantine --db db/chilliflake.db sync --dry-run
-python -m src.analyzer.quarantine --db db/chilliflake.db sync
-python -m src.analyzer.quarantine --db db/chilliflake.db export --out quarantine.json
+python -m src.ingestion.run_ingestion --project home-assistant-core --runs 50 --branch dev
+python -m src.analyzer.run_analysis --project home-assistant-core --branch dev
+python -m src.analyzer.quarantine --db db/chilliflake.db sync --project home-assistant-core --branch dev --dry-run
+python -m src.analyzer.quarantine --db db/chilliflake.db sync --project home-assistant-core --branch dev
+python -m src.analyzer.quarantine --db db/chilliflake.db export --project home-assistant-core --branch dev --out quarantine.yaml
 streamlit run dashboard/app.py
 ```
 
-In the target repository, install ChilliFlake and run:
+The pipeline is safe to rerun: previously ingested workflow runs are skipped, analysis replaces only the selected project/branch score scope, and quarantine sync is idempotent. A run is not ingested when any matching artifact fails to download.
 
-```yaml
-- run: python -m src.analyzer.quarantine export --out quarantine.json
-- run: CHILLIFLAKE_QUARANTINE_FILE=quarantine.json pytest -p src.analyzer.pytest_plugin
+Exports have `schema_version: 1`, stable ID ordering, and an atomic write. The analyzer records each scoring run and writes quarantine transition events, including regressions after a previous release. Compare two exports with:
+
+```sh
+python -m src.analyzer.quarantine diff old.yaml new.yaml --fail-on-regressed
 ```
 
-Quarantined tests run and are marked `xfail(strict=False)` by default. Set `CHILLIFLAKE_QUARANTINE_MODE=skip` for skip behavior.
+- **Newly quarantined:** currently flaky and never previously auto-quarantined.
+- **Released:** previously auto-quarantined and now stable with enough additional samples.
+- **Regressed:** previously released and flagged flaky again, so it is quarantined again.
+- Manual quarantine entries are never automatically released.
+
+See [docs/ci-integration.md](docs/ci-integration.md) for using the pytest plugin.
 
 ## Metrics and verdicts
 
 - Flip rate is status changes divided by adjacent result pairs. Its Wilson lower bound measures the flip proportion, not the failure proportion.
-- Isolated failures count a failing result surrounded by passes.
-- Commit conflicts count commits with both passing and failing results for a test and are the strongest flakiness signal.
-- Verdict precedence is insufficient sample count, nearly always failing (`broken`), same-commit conflict (`flaky`), statistically supported flips with enough isolated failures (`flaky`), then `stable`.
-- `timedOut` and `interrupted` are reserved database statuses; the current JUnit parser maps `<error>` to `failed` and does not emit these reserved values.
-- The analyzer defaults to branch `dev`; `--branch ''` scores all branches. Branch-specific scoring is important because cross-commit or cross-branch changes can be real regressions.
+- Isolated failures and same-commit pass/fail conflicts contribute to flaky verdicts.
+- `timedOut` and `interrupted` are reserved database statuses; the JUnit parser currently maps `<error>` to `failed`.
+- Infrastructure-wide failures can resemble mass flakiness, and renamed tests start a new history.
 
-`python scripts/run_pipeline.py` chains ingestion, scoring, quarantine sync, and JSON export. The daily workflow stores a SQLite backup and publishes the database and quarantine output as workflow artifacts. GitHub Actions source artifacts expire, so preserve the database as the long-term history.
+GitHub Actions artifacts expire, so preserve the SQLite database as the long-term history.
 
-## Limitations
+## Development and verification
 
-- Class-chain recovery for old database rows works only when the old path came from a classname fallback.
-- Infrastructure-wide failures can resemble mass flakiness; builds with unusually high failure rates are not filtered yet.
-- Only `home-assistant/core` is configured as the default ingestion project.
-- Renamed tests start a new history.
-- Duplicate testcase entries within a build remain separate observations. A live artifact inspection is needed to determine whether the target CI emits retry duplicates and whether they should be collapsed.
+```sh
+python -m pytest -q
+python -m compileall -q db src scripts dashboard
+```
 
-On the checked-in database, the branch-indexed scoring pass processed 18,481 tests for `main` in about 13 seconds (2026-10-23); wall time depends on the selected branch and host.
+CI runs the tests on Python 3.11 and 3.12. The dashboard opens the database read-only for queries and uses short-lived write connections only for manual quarantine actions.

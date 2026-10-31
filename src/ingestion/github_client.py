@@ -9,11 +9,14 @@ GITHUB_API_BASE = 'https://api.github.com'
 GITHUB_API_VERSION = '2022-11-28'
 RATE_LIMIT_BUFFER = 50
 MAX_RETRIES = 5
-MAX_BACKOFF_SECONDS = 64
+MAX_BACKOFF_SECONDS = 60
 
-def make_session(token: str) -> requests.Session:
+def make_session(token: str | None = None) -> requests.Session:
     session = requests.Session()
-    session.headers.update({'Accept': 'application/vnd.github+json', 'Authorization': f'Bearer {token}', 'X-GitHub-Api-Version': GITHUB_API_VERSION})
+    headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': GITHUB_API_VERSION}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    session.headers.update(headers)
     return session
 
 def _check_rate_limit(response: requests.Response) -> None:
@@ -28,8 +31,8 @@ def _check_rate_limit(response: requests.Response) -> None:
     if remaining_int < RATE_LIMIT_BUFFER and reset:
         try:
             sleep_seconds = max(0, int(reset) - int(time.time())) + 1
-            logger.warning('Rate limit low (%d left). Sleeping %ds.', remaining_int, sleep_seconds)
-            time.sleep(sleep_seconds)
+            logger.warning('GitHub rate limit is low (%d left; resets in about %ds).',
+                           remaining_int, sleep_seconds)
         except (ValueError, TypeError):
             pass
 
@@ -41,25 +44,52 @@ def _is_rate_limited(response: requests.Response) -> bool:
 
 def _get_with_backoff(session: requests.Session, url: str, **kwargs: Any) -> requests.Response:
     backoff = 1
+    tried_anonymous = False
+    kwargs.setdefault('timeout', 30)
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             response = session.get(url, **kwargs)
         except requests.exceptions.RequestException as exc:
-            logger.error('Network error on GET %s: %s', url, exc)
-            raise
-        _check_rate_limit(response)
+            if attempt > MAX_RETRIES:
+                logger.error('Giving up on GET %s after %d retries: %s', url, MAX_RETRIES, exc)
+                raise
+            logger.warning('Network error on GET %s: %s. Retry in %ds (%d/%d).',
+                           url, exc, backoff, attempt, MAX_RETRIES)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+            continue
         if response.status_code in (403, 429) and _is_rate_limited(response):
             if attempt > MAX_RETRIES:
                 logger.error('Giving up on GET %s after %d retries.', url, MAX_RETRIES)
                 response.raise_for_status()
-            wait = int(response.headers.get('Retry-After', min(backoff, MAX_BACKOFF_SECONDS)))
+            retry_after = response.headers.get('Retry-After')
+            reset = response.headers.get('X-RateLimit-Reset')
+            try:
+                wait = int(retry_after) if retry_after is not None else max(0, int(reset) - int(time.time())) + 1
+            except (TypeError, ValueError):
+                wait = backoff
+            wait = min(max(0, wait), MAX_BACKOFF_SECONDS)
             logger.warning('Rate limited on %s. Retry in %ds (%d/%d).', url, wait, attempt, MAX_RETRIES)
             time.sleep(wait)
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
             continue
+        if response.status_code >= 500:
+            if attempt > MAX_RETRIES:
+                response.raise_for_status()
+            logger.warning('GitHub returned %d for %s. Retry in %ds (%d/%d).',
+                           response.status_code, url, backoff, attempt, MAX_RETRIES)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+            continue
+        if response.status_code == 401 and not tried_anonymous and 'Authorization' in session.headers:
+            logger.warning('GitHub rejected the configured token; retrying once without authentication for public access.')
+            session.headers.pop('Authorization', None)
+            tried_anonymous = True
+            continue
         if response.status_code == 403:
             logger.error('403 on %s — not rate-limiting, likely a bad token/scope: %s', url, response.text[:300])
         response.raise_for_status()
+        _check_rate_limit(response)
         return response
     raise RuntimeError('Unreachable')
 
@@ -73,11 +103,7 @@ def list_workflow_runs(session: requests.Session, repo: str, workflow_names: lis
     collected: list[dict[str, Any]] = []
     workflow_name_set = set(workflow_names)
     while len(collected) < max_runs:
-        try:
-            response = _get_with_backoff(session, url, params=params)
-        except requests.exceptions.RequestException as exc:
-            logger.error('Failed to list workflow runs for %s: %s', repo, exc)
-            break
+        response = _get_with_backoff(session, url, params=params)
         runs = response.json().get('workflow_runs', [])
         if not runs:
             break
@@ -97,11 +123,7 @@ def list_artifacts(session: requests.Session, repo: str, run_id: int, name_prefi
     collected: list[dict[str, Any]] = []
     page = 1
     while True:
-        try:
-            response = _get_with_backoff(session, url, params={'per_page': 100, 'page': page})
-        except requests.exceptions.RequestException as exc:
-            logger.error('Failed to list artifacts for run %d: %s', run_id, exc)
-            break
+        response = _get_with_backoff(session, url, params={'per_page': 100, 'page': page})
         artifacts = response.json().get('artifacts', [])
         for artifact in artifacts:
             if artifact.get('expired', False):
@@ -123,13 +145,19 @@ def download_artifact_zip(session: requests.Session, artifact_id: int, repo: str
         logger.error('Failed to download artifact %d: %s', artifact_id, exc)
         raise
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'_artifact_{artifact_id}.zip', dir=dest_dir)
+    path = Path(tmp.name)
     bytes_written = 0
     try:
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
                 tmp.write(chunk)
                 bytes_written += len(chunk)
-    finally:
+    except Exception:
         tmp.close()
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        if not tmp.closed:
+            tmp.close()
     logger.info('Artifact %d downloaded (%.1f KB).', artifact_id, bytes_written / 1024)
-    return Path(tmp.name)
+    return path
